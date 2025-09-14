@@ -119,9 +119,9 @@ function computeSubtotal(products: any[], cart: Record<string, number>) {
 }
 
 export default function AIShopstream() {
-  // Settings
-  const [shopDomain, setShopDomain] = useState("");
-  const [storefrontToken, setStorefrontToken] = useState("");
+  // Settings - Load from environment variables
+  const [shopDomain, setShopDomain] = useState(process.env.NEXT_PUBLIC_SHOPIFY_DOMAIN || "");
+  const [storefrontToken, setStorefrontToken] = useState(process.env.NEXT_PUBLIC_SHOPIFY_TOKEN || "");
   const [llmUrl, setLlmUrl] = useState("");
 
   // Core state
@@ -462,19 +462,21 @@ export default function AIShopstream() {
               <div className="text-xs font-medium text-slate-600">Shop Domain</div>
               <Input 
                 placeholder="mystore.myshopify.com" 
-                value={shopDomain} 
-                onChange={(e) => setShopDomain(e.target.value)} 
+                value={shopDomain}
+                disabled
+                className="bg-gray-50"
               />
-              <div className="text-[11px] text-slate-500">Leave blank to use mock products.</div>
+              <div className="text-[11px] text-slate-500">Loaded from NEXT_PUBLIC_SHOPIFY_DOMAIN</div>
             </div>
             <div className="space-y-2">
               <div className="text-xs font-medium text-slate-600">Storefront Token</div>
               <Input 
                 placeholder="Storefront token" 
-                value={storefrontToken} 
-                onChange={(e) => setStorefrontToken(e.target.value)} 
+                value={storefrontToken ? "••••••••••••••••" : "Not configured"}
+                disabled
+                className="bg-gray-50"
               />
-              <div className="text-[11px] text-slate-500">Create in Shopify → Apps → Develop apps.</div>
+              <div className="text-[11px] text-slate-500">Loaded from NEXT_PUBLIC_SHOPIFY_TOKEN</div>
             </div>
             <div className="space-y-2">
               <div className="text-xs font-medium text-slate-600">Virtual Try-On API (optional)</div>
