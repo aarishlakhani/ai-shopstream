@@ -29,6 +29,10 @@ async function mockFetchProducts(query: string) {
 // Storefront API fetch via API route
 async function fetchStorefrontProducts(query: string, shopDomain: string, storefrontToken: string) {
   if (!shopDomain || !storefrontToken) {
+    console.log('⚠️ Missing Shopify credentials, using mock data:', { 
+      shopDomain: shopDomain || 'MISSING', 
+      hasToken: !!storefrontToken 
+    });
     return mockFetchProducts(query);
   }
 
@@ -120,13 +124,28 @@ function computeSubtotal(products: any[], cart: Record<string, number>) {
 
 export default function AIShopstream() {
   // Settings - Load from environment variables
-  const [shopDomain, setShopDomain] = useState(process.env.NEXT_PUBLIC_SHOPIFY_DOMAIN || "");
-  const [storefrontToken, setStorefrontToken] = useState(process.env.NEXT_PUBLIC_SHOPIFY_TOKEN || "");
+  const [shopDomain, setShopDomain] = useState("");
+  const [storefrontToken, setStorefrontToken] = useState("");
   const [llmUrl, setLlmUrl] = useState("");
+
+  // Initialize environment variables on mount
+  useEffect(() => {
+    const envShopDomain = process.env.NEXT_PUBLIC_SHOPIFY_DOMAIN || "";
+    const envStorefrontToken = process.env.NEXT_PUBLIC_SHOPIFY_TOKEN || "";
+    
+    console.log('🔧 Environment variables loaded:', {
+      shopDomain: envShopDomain || 'NOT_SET',
+      hasToken: !!envStorefrontToken,
+      tokenLength: envStorefrontToken?.length || 0
+    });
+    
+    setShopDomain(envShopDomain);
+    setStorefrontToken(envStorefrontToken);
+  }, []);
 
   // Core state
   const [lang, setLang] = useState("en");
-  const [query, setQuery] = useState("casual hoodie");
+  const [query, setQuery] = useState("");
   const [products, setProducts] = useState<any[]>(MOCK_PRODUCTS);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [chat, setChat] = useState<{ user: string; text: string }[]>([
@@ -172,10 +191,17 @@ export default function AIShopstream() {
   useEffect(() => {
     (async () => {
       try {
+        console.log('🔄 Fetching products with credentials:', { 
+          shopDomain: shopDomain || 'NOT_SET', 
+          hasToken: !!storefrontToken,
+          tokenLength: storefrontToken?.length || 0,
+          query 
+        });
+        
         const res = await fetchStorefrontProducts(query, shopDomain, storefrontToken);
         setProducts(res && res.length ? res : MOCK_PRODUCTS);
       } catch (e) {
-        console.error(e);
+        console.error('❌ Product fetch error:', e);
         const res = await mockFetchProducts(query);
         setProducts(res && res.length ? res : MOCK_PRODUCTS);
       }
