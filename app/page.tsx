@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { ShoppingCart, Sparkles, Mic, MessageCircle, Play, Pause, Languages, Video } from "lucide-react";
+import { ShoppingCart, Sparkles, Upload, MessageCircle, Camera, RotateCcw } from "lucide-react";
 
 // Mock Data Fallback
 const MOCK_PRODUCTS = [
@@ -25,40 +26,48 @@ async function mockFetchProducts(query: string) {
   );
 }
 
-// Storefront API fetch
+// Storefront API fetch via API route
 async function fetchStorefrontProducts(query: string, shopDomain: string, storefrontToken: string) {
   if (!shopDomain || !storefrontToken) {
     return mockFetchProducts(query);
   }
 
-  const endpoint = `https://${shopDomain}/api/2024-10/graphql.json`;
-  const body = {
-    query: `query AIShopstreamProducts($q: String!) {
-      products(first: 12, query: $q) {
-        edges { node {
-          id title tags totalInventory
-          images(first: 1) { edges { node { url } } }
-          variants(first: 1) { edges { node { id price { amount } } } }
-          metafields(first: 10, namespace: "custom") { edges { node { key value } } }
-        }}
-      }
-    }`,
-    variables: { q: query || "" }
-  };
-
   try {
-    const res = await fetch(endpoint, {
+    console.log('🔍 Shopify API Debug:', { shopDomain, tokenLength: storefrontToken.length, query });
+    
+    const res = await fetch('/api/shopify', {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Shopify-Storefront-Access-Token": storefrontToken,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        query,
+        shopDomain,
+        storefrontToken
+      }),
     });
 
-    if (!res.ok) throw new Error(`Storefront API error: ${res.status}`);
+    console.log('📡 API Response:', { status: res.status, ok: res.ok });
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      console.error('❌ API Error Response:', errorData);
+      throw new Error(`API error: ${res.status} - ${errorData.error}`);
+    }
+    
     const data = await res.json();
+    console.log('📦 API Data:', data);
+    
+    // Check for GraphQL errors
+    if (data.errors && data.errors.length > 0) {
+      console.error('🚨 GraphQL Errors:', data.errors);
+      data.errors.forEach((error: any, index: number) => {
+        console.error(`Error ${index + 1}:`, error.message);
+      });
+    }
+    
     const edges = data?.data?.products?.edges ?? [];
+    console.log('🛍️ Products found:', edges.length);
 
     const mapped = edges.map((e: any) => {
       const n = e.node;
@@ -76,9 +85,10 @@ async function fetchStorefrontProducts(query: string, shopDomain: string, storef
       };
     });
 
+    console.log('✅ Mapped products:', mapped);
     return mapped.length ? mapped : mockFetchProducts(query);
   } catch (e) {
-    console.error(e);
+    console.error('💥 Shopify API Error:', e);
     return mockFetchProducts(query);
   }
 }
@@ -112,31 +122,51 @@ export default function AIShopstream() {
   // Settings
   const [shopDomain, setShopDomain] = useState("");
   const [storefrontToken, setStorefrontToken] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
   const [llmUrl, setLlmUrl] = useState("");
 
   // Core state
-  const [live, setLive] = useState(true);
   const [lang, setLang] = useState("en");
-  const [query, setQuery] = useState("sneakers under 100");
+  const [query, setQuery] = useState("casual hoodie");
   const [products, setProducts] = useState<any[]>(MOCK_PRODUCTS);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [chat, setChat] = useState<{ user: string; text: string }[]>([
-    { user: "Host", text: "Welcome to the drop! Ask me anything." },
+    { user: "AI Stylist", text: "Upload your photo and I'll help you try on clothes virtually!" },
   ]);
   const [msg, setMsg] = useState("");
   const [answer, setAnswer] = useState<string>("");
   const [testResults, setTestResults] = useState<{ name: string; pass: boolean; detail?: string }[]>([]);
+  const [mounted, setMounted] = useState(false);
+  const [userPhoto, setUserPhoto] = useState<string>("");
+  const [selectedProduct, setSelectedProduct] = useState<any>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load avatar stream
+  // Mount effect
   useEffect(() => {
-    if (videoRef.current && avatarUrl) {
-      videoRef.current.src = avatarUrl;
-      videoRef.current.play().catch(() => {});
+    setMounted(true);
+  }, []);
+
+  // Handle photo upload
+  const handlePhotoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setUserPhoto(e.target?.result as string);
+        setChat((c) => [...c, { user: "You", text: "Photo uploaded! Now select a clothing item to try on." }]);
+      };
+      reader.readAsDataURL(file);
     }
-  }, [avatarUrl]);
+  };
+
+  const triggerPhotoUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const tryOnProduct = (product: any) => {
+    setSelectedProduct(product);
+    setChat((c) => [...c, { user: "AI Stylist", text: `Great choice! The ${product.title} would look amazing on you. Here's how it looks virtually applied to your photo.` }]);
+  };
 
   // Fetch products
   useEffect(() => {
@@ -160,29 +190,34 @@ export default function AIShopstream() {
     setMsg("");
   };
 
+  // Prevent hydration errors by not rendering until mounted
+  if (!mounted) {
+    return null;
+  }
+
   const addToCart = (id: string) => setCart((c) => ({ ...c, [id]: (c[id] || 0) + 1 }));
 
-  const askHost = async () => {
+  const askStylist = async () => {
     try {
       if (llmUrl) {
         const res = await fetch(llmUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: query, products, lang })
+          body: JSON.stringify({ prompt: query, products, lang, hasPhoto: !!userPhoto })
         });
         const data = await res.json();
         const a = data?.answer || "(No answer returned)";
         setAnswer(a);
-        setChat((c) => [...c, { user: "Host", text: a }]);
+        setChat((c) => [...c, { user: "AI Stylist", text: a }]);
       } else {
         const a = await mockLLMAnswer(query, products, lang);
         setAnswer(a);
-        setChat((c) => [...c, { user: "Host", text: a }]);
+        setChat((c) => [...c, { user: "AI Stylist", text: a }]);
       }
     } catch (e: any) {
-      const a = `AI Host error (fallback): ${await mockLLMAnswer(query, products, lang)}`;
+      const a = `AI Stylist: ${await mockLLMAnswer(query, products, lang)}`;
       setAnswer(a);
-      setChat((c) => [...c, { user: "Host", text: a }]);
+      setChat((c) => [...c, { user: "AI Stylist", text: a }]);
     }
   };
 
@@ -227,36 +262,73 @@ export default function AIShopstream() {
     <div className="max-w-6xl mx-auto p-6 space-y-6">
       <header className="flex items-center justify-between">
         <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Sparkles className="w-7 h-7 text-purple-600" /> AI Shopstream
+          <Sparkles className="w-7 h-7 text-purple-600" /> AI Virtual Try-On
         </h1>
         <div className="flex items-center gap-2">
-          <Badge variant="secondary">Live Shopping</Badge>
+          <Badge variant="secondary">Virtual Styling</Badge>
           <Badge variant="outline">AI Powered</Badge>
         </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Avatar Host & Ask */}
+        {/* Left: Virtual Try-On Section */}
         <div className="lg:col-span-2 space-y-4">
           <Card className="overflow-hidden">
             <CardContent className="p-0">
-              <div className="bg-black aspect-video relative">
-                <video ref={videoRef} className="w-full h-full bg-black" muted playsInline controls />
-                <div className="absolute top-3 left-3 flex items-center gap-2">
-                  <Badge className="bg-red-600">LIVE</Badge>
-                  <span className="text-white/90 text-sm">AI Host · Multilingual</span>
-                </div>
-                <div className="absolute bottom-3 left-3 flex gap-2">
-                  <Button size="sm" variant={live ? "secondary" : "default"} onClick={() => setLive(!live)}>
-                    {live ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />} {live ? "Pause" : "Play"}
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    <Mic className="w-4 h-4 mr-1" /> Voice
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    <Video className="w-4 h-4 mr-1" /> Switch Host
-                  </Button>
-                </div>
+              <div className="bg-gradient-to-br from-purple-50 to-blue-50 aspect-video relative flex items-center justify-center">
+                {userPhoto ? (
+                  <div className="relative w-full h-full">
+                    <img src={userPhoto} alt="Your photo" className="w-full h-full object-cover" />
+                    {selectedProduct && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="relative w-full h-full">
+                          <img 
+                            src={selectedProduct.image} 
+                            alt={selectedProduct.title}
+                            className="absolute inset-0 w-full h-full object-contain opacity-60 mix-blend-multiply"
+                            style={{
+                              maskImage: 'radial-gradient(ellipse 40% 60% at center 35%, black 0%, black 40%, transparent 70%)',
+                              WebkitMaskImage: 'radial-gradient(ellipse 40% 60% at center 35%, black 0%, black 40%, transparent 70%)'
+                            }}
+                          />
+                          <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg p-3 text-center shadow-lg">
+                            <p className="text-sm font-medium text-gray-800">Virtual Try-On</p>
+                            <p className="text-xs text-gray-600">{selectedProduct.title}</p>
+                            <p className="text-xs text-purple-600 font-medium">${selectedProduct.price.toFixed(2)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center space-y-4">
+                    <Camera className="w-16 h-16 text-purple-400 mx-auto" />
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-700">Upload Your Photo</h3>
+                      <p className="text-sm text-gray-500">See how clothes look on you with AI virtual try-on</p>
+                    </div>
+                    <Button onClick={triggerPhotoUpload} className="bg-purple-600 hover:bg-purple-700">
+                      <Upload className="w-4 h-4 mr-2" /> Upload Photo
+                    </Button>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoUpload}
+                  className="hidden"
+                />
+                {userPhoto && (
+                  <div className="absolute bottom-3 left-3 flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={triggerPhotoUpload}>
+                      <Upload className="w-4 h-4 mr-1" /> Change Photo
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => {setUserPhoto(""); setSelectedProduct(null);}}>
+                      <RotateCcw className="w-4 h-4 mr-1" /> Reset
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -275,10 +347,10 @@ export default function AIShopstream() {
                 <Input 
                   value={query} 
                   onChange={(e) => setQuery(e.target.value)} 
-                  placeholder="Ask for products… e.g., 'best sneakers under $100'" 
+                  placeholder="Describe what you're looking for… e.g., 'casual hoodie for winter'" 
                 />
-                <Button onClick={askHost}>
-                  <Sparkles className="w-4 h-4 mr-1" /> Ask Host
+                <Button onClick={askStylist}>
+                  <Sparkles className="w-4 h-4 mr-1" /> Ask Stylist
                 </Button>
               </div>
               {answer && <p className="text-sm text-muted-foreground leading-relaxed">{answer}</p>}
@@ -314,33 +386,37 @@ export default function AIShopstream() {
           </Card>
 
           <Card>
-            <CardContent className="p-4 space-y-3">
+            <CardContent className="p-4 space-y-4">
               <h3 className="font-semibold">Featured Products</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-3">
                 {products.map((p) => (
                   <Card key={p.id} className="overflow-hidden">
-                    <img src={p.image} alt={p.title} className="w-full h-40 object-cover" />
-                    <CardContent className="p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium leading-tight">{p.title}</div>
-                          <div className="text-sm text-muted-foreground">
-                            ${p.price.toFixed(2)} · ⭐ {p.rating ?? "-"}
+                    <div className="flex flex-col">
+                      <div className="w-full h-48">
+                        <img src={p.image} alt={p.title} className="w-full h-full object-cover" />
+                      </div>
+                      <CardContent className="p-3 space-y-3">
+                        <div className="space-y-2">
+                          <div className="font-medium text-sm leading-tight">{p.title}</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-sm text-muted-foreground flex-shrink-0">
+                              ${p.price.toFixed(2)} · ⭐ {p.rating ?? "-"}
+                            </div>
+                            <Badge variant={p.inventory > 15 ? "secondary" : "destructive"} className="text-xs flex-shrink-0">
+                              {p.inventory > 15 ? "In stock" : "Low stock"}
+                            </Badge>
                           </div>
                         </div>
-                        <Badge variant={p.inventory > 15 ? "secondary" : "destructive"}>
-                          {p.inventory > 15 ? "In stock" : "Low stock"}
-                        </Badge>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" className="flex-1" onClick={() => addToCart(p.id)}>
-                          <ShoppingCart className="w-4 h-4 mr-1" /> Add to cart
-                        </Button>
-                        <Button size="sm" variant="outline" className="flex-1" onClick={() => setQuery(p.title)}>
-                          Compare
-                        </Button>
-                      </div>
-                    </CardContent>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button size="sm" className="text-xs" onClick={() => tryOnProduct(p)}>
+                            <Camera className="w-3 h-3 mr-1" /> Try On
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-xs" onClick={() => addToCart(p.id)}>
+                            <ShoppingCart className="w-3 h-3 mr-1" /> Add to cart
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </div>
                   </Card>
                 ))}
               </div>
@@ -401,13 +477,13 @@ export default function AIShopstream() {
               <div className="text-[11px] text-slate-500">Create in Shopify → Apps → Develop apps.</div>
             </div>
             <div className="space-y-2">
-              <div className="text-xs font-medium text-slate-600">Avatar Video URL</div>
+              <div className="text-xs font-medium text-slate-600">Virtual Try-On API (optional)</div>
               <Input 
-                placeholder="https://.../host.mp4 (recommended)" 
-                value={avatarUrl} 
-                onChange={(e) => setAvatarUrl(e.target.value)} 
+                placeholder="/api/virtual-tryon" 
+                value={llmUrl} 
+                onChange={(e) => setLlmUrl(e.target.value)} 
               />
-              <div className="text-[11px] text-slate-500">Use MP4 for simplest playback.</div>
+              <div className="text-[11px] text-slate-500">API endpoint for advanced virtual try-on processing.</div>
             </div>
             <div className="space-y-2">
               <div className="text-xs font-medium text-slate-600">LLM API URL (optional)</div>
